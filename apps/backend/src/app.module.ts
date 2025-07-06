@@ -3,6 +3,9 @@ import { MongooseModule } from "@nestjs/mongoose";
 import { ThrottlerModule } from "@nestjs/throttler";
 import { BullModule } from "@nestjs/bull";
 import { ConfigModule, ConfigService } from "@nestjs/config";
+import { AuthModule } from "./auth/auth.module";
+import { UsersModule } from "./users/users.module";
+import { UsersService } from "./users/services/users.service";
 
 @Module({
   imports: [
@@ -31,6 +34,9 @@ import { ConfigModule, ConfigService } from "@nestjs/config";
         limit: 100,
       },
     ]),
+    AuthModule,
+    UsersModule,
   ],
+  providers: [UsersService],
 })
 export class AppModule {}
