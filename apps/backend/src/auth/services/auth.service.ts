@@ -1,146 +1,172 @@
-import { HttpStatus, Injectable, UnauthorizedException } from "@nestjs/common";
-import { InjectModel } from "@nestjs/mongoose";
-import { Model } from "mongoose";
-import { User } from "../../users/schemas/users.schema";
-import { SignupDto } from "../dto/signup.dto";
-import { LoginDto } from "../dto/login.dto";
+// src/auth/services/auth.service.ts
+import { Injectable, Logger, HttpException, HttpStatus } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { JwtService } from "@nestjs/jwt";
 import { UsersService } from "src/users/services/users.service";
-import { InjectQueue } from "@nestjs/bull";
-import { Queue } from "bull";
-import { ConfigService } from "@nestjs/config";
-import { createClient } from "redis";
 import { RedisService } from "src/shared/services/redis_service";
 import { EmailService } from "src/shared/services/email_service";
+import { ApiException, ApiSuccess } from "src/common/exceptions/api.exceptions";
+import { SignupDto } from "../dto/signup.dto";
+import { RefreshDto } from "../dto/refresh.dto";
+import { SignupResponseData } from "../interfaces/auth.interface";
 
-// AuthService handles all authentication logic
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
-    private jwtService: JwtService,
-    private readonly UsersService: UsersService,
-    private readonly RedisService: RedisService,
-    private readonly EmailService: EmailService
+    private readonly jwtService: JwtService,
+    private readonly usersService: UsersService,
+    private readonly redisService: RedisService,
+    private readonly emailService: EmailService,
+    private readonly configService: ConfigService
   ) {}
 
-  // Sign up a new user and return tokens
-  async signup(signupDto: SignupDto) {
+  async signup(signupDto: SignupDto): Promise<ApiSuccess<SignupResponseData>> {
     try {
-      // Check if user already exists
-      const existingUser = await this.UsersService.findByEmail(signupDto.email);
-      if (existingUser) {
-        return {
-          success: false,
-          message: "User with this email already exists",
-          status: HttpStatus.CONFLICT,
-          data: [],
-        };
-      }
-      const user = await this.UsersService.createUser(signupDto);
+      const user = await this.usersService.createUser(signupDto);
       if (!user) {
-        //handle errors thrown by the service or repository
+        throw new ApiException(
+          "Failed to create user",
+          HttpStatus.INTERNAL_SERVER_ERROR
+        );
       }
-      const payload = { email: user.email, sub: user._id };
-      const accessToken = this.jwtService.sign(payload);
-      const refreshToken = this.jwtService.sign(payload, { expiresIn: "7d" });
-
-      // Store refresh token in Redis with 7-day expiration
-      await this.RedisService.storeRefreshToken(user?.id, refreshToken);
-
-      // Add welcome email job to queue
-
-      await this.EmailService.sendWelcomeEmail(user.email, user.name);
-
+      const { accessToken, refreshToken } = await this.generateTokens(user);
+      try {
+        await this.redisService.storeRefreshToken(
+          user._id.toString(),
+          refreshToken
+        );
+      } catch (error) {
+        throw new ApiException(
+          "Failed to store refresh token",
+          HttpStatus.INTERNAL_SERVER_ERROR,
+          error.message
+        );
+      }
+      try {
+        await this.emailService.sendWelcomeEmail(user.email, user.name);
+      } catch (error) {
+        this.logger.error(
+          `Failed to queue welcome email: ${error.message}`,
+          error.stack
+        );
+      }
+      const data: SignupResponseData = {
+        user: {
+          id: user._id.toString(),
+          email: user.email,
+          name: user.name,
+          lastLogin: user.lastLogin,
+        },
+        accessToken,
+        refreshToken,
+      };
       return {
         success: true,
         message: "User registered successfully",
         status: HttpStatus.CREATED,
-        data: {
-          user: {
-            id: user._id,
-            email: user.email,
-            name: user.name,
-            lastLogin: user.lastLogin,
-          },
-          accessToken,
-          refreshToken,
-        },
+        data,
       };
     } catch (error) {
-      return {
-        success: false,
-        error: "Failed to register user",
-        status: HttpStatus.BAD_REQUEST,
-      };
+      this.logger.error(
+        `Signup failed for ${signupDto.email}: ${error.message}`,
+        error.stack
+      );
+      if (error instanceof HttpException) {
+        if (error.getStatus() === HttpStatus.CONFLICT) {
+          throw new ApiException(
+            "Signup failed: email already taken",
+            HttpStatus.CONFLICT,
+            error.message
+          );
+        }
+        throw error;
+      }
+      throw new ApiException(
+        "Failed to register user",
+        HttpStatus.INTERNAL_SERVER_ERROR,
+        error.message
+      );
     }
   }
 
-  // // Log in a user and return tokens
-  // async login(loginDto: LoginDto) {
-  //   try {
-  //     const user = await this.userModel.findOne({ email: loginDto.email });
-  //     if (!user) {
-  //       throw new UnauthorizedException("Invalid credentials");
-  //     }
+  async refreshToken(
+    refreshDto: RefreshDto
+  ): Promise<ApiSuccess<{ accessToken: string }>> {
+    try {
+      const storedToken = await this.redisService.getRefreshToken(
+        refreshDto.userId
+      );
+      if (!storedToken || storedToken !== refreshDto.refreshToken) {
+        throw new ApiException(
+          "Invalid or expired refresh token",
+          HttpStatus.UNAUTHORIZED
+        );
+      }
+      const payload = this.jwtService.verify(refreshDto.refreshToken, {
+        secret: this.configService.get<string>("JWT_REFRESH_SECRET"),
+      });
+      const accessToken = this.jwtService.sign(
+        { email: payload.email, sub: payload.sub },
+        {
+          secret: this.configService.get<string>("JWT_ACCESS_SECRET"),
+          expiresIn: this.configService.get<string>("JWT_ACCESS_EXPIRES_IN"),
+        }
+      );
+      return {
+        success: true,
+        message: "Access token refreshed",
+        status: HttpStatus.OK,
+        data: { accessToken },
+      };
+    } catch (error) {
+      this.logger.error(
+        `Token refresh failed for user ${refreshDto.userId}: ${error.message}`,
+        error.stack
+      );
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      throw new ApiException(
+        "Failed to refresh token",
+        HttpStatus.INTERNAL_SERVER_ERROR,
+        error.message
+      );
+    }
+  }
 
-  //     const bcrypt = await import("bcryptjs");
-  //     const isMatch = await bcrypt.compare(loginDto.password, user.password);
-  //     if (!isMatch) {
-  //       throw new UnauthorizedException("Invalid credentials");
-  //     }
-
-  //     user.lastLogin = new Date();
-  //     await user.save();
-
-  //     const payload = { email: user.email, sub: user._id };
-  //     const accessToken = this.jwtService.sign(payload);
-  //     const refreshToken = this.jwtService.sign(payload, { expiresIn: "7d" });
-
-  //     // Store refresh token in Redis
-  //     await this.redisClient.set(`refresh:${user._id}`, refreshToken, {
-  //       EX: 604800,
-  //     });
-  //     // Add login notification job to queue
-  //     await this.emailQueue.add("login", { to: user.email });
-
-  //     return {
-  //       success: true,
-  //       data: { message: "Login successful", accessToken, refreshToken },
-  //     };
-  //   } catch (error) {
-  //     return {
-  //       success: false,
-  //       error: error.message || "Login failed",
-  //       status: HttpStatus.UNAUTHORIZED,
-  //     };
-  //   }
-  // }
-
-  // // Refresh access token using refresh token
-  // async refresh(refreshToken: string) {
-  //   try {
-  //     const payload = this.jwtService.verify(refreshToken, {
-  //       secret: this.configService.get("JWT_SECRET"),
-  //     });
-  //     const storedToken = await this.redisClient.get(`refresh:${payload.sub}`);
-
-  //     if (storedToken !== refreshToken) {
-  //       throw new UnauthorizedException("Invalid refresh token");
-  //     }
-
-  //     const newPayload = { email: payload.email, sub: payload.sub };
-  //     const newAccessToken = this.jwtService.sign(newPayload);
-
-  //     return {
-  //       success: true,
-  //       data: { accessToken: newAccessToken },
-  //     };
-  //   } catch (error) {
-  //     return {
-  //       success: false,
-  //       error: "Invalid or expired refresh token",
-  //       status: HttpStatus.UNAUTHORIZED,
-  //     };
-  //   }
-  // }
+  private async generateTokens(user: any) {
+    const payload = { email: user.email, sub: user._id.toString() };
+    const [jwtSecret, refreshSecret, accessExpiry, refreshExpiry] = [
+      this.configService.get<string>("JWT_ACCESS_SECRET"),
+      this.configService.get<string>("JWT_REFRESH_SECRET"),
+      this.configService.get<string>("JWT_ACCESS_EXPIRES_IN"),
+      this.configService.get<string>("JWT_REFRESH_EXPIRES_IN"),
+    ];
+    if (!jwtSecret || !refreshSecret || !accessExpiry || !refreshExpiry) {
+      this.logger.error("JWT configuration is incomplete");
+      throw new ApiException(
+        "JWT configuration is incomplete",
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+    try {
+      const accessToken = this.jwtService.sign(payload, {
+        secret: jwtSecret,
+        expiresIn: accessExpiry,
+      });
+      const refreshToken = this.jwtService.sign(payload, {
+        secret: refreshSecret,
+        expiresIn: refreshExpiry,
+      });
+      return { accessToken, refreshToken };
+    } catch (error) {
+      throw new ApiException(
+        "Failed to generate tokens",
+        HttpStatus.INTERNAL_SERVER_ERROR,
+        error.message
+      );
+    }
+  }
 }

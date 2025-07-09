@@ -1,15 +1,10 @@
-export interface AuthTokens {
+export interface SignupResponseData {
+  user: {
+    id: string;
+    email: string;
+    name: string;
+    lastLogin: Date | null;
+  };
   accessToken: string;
   refreshToken: string;
-}
-
-export interface AuthResponse {
-  success: boolean;
-  data?: {
-    message: string;
-    accessToken: string;
-    refreshToken: string;
-  };
-  error?: string;
-  status?: number;
 }
