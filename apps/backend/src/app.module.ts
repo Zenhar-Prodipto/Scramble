@@ -31,6 +31,11 @@ import { JwtAuthGuard } from "./auth/guards/jwt-auth.guard";
         ttl: 3600000,
         limit: 3,
       },
+      {
+        name: "login",
+        ttl: 3600000,
+        limit: 5,
+      },
     ]),
     MongooseModule.forRootAsync({
       useFactory: () => ({

@@ -21,4 +21,10 @@ export class UsersRepository {
   async findById(id: string): Promise<User | null> {
     return await this.userModel.findById(id).exec();
   }
+
+  async updateLastLogin(id: string): Promise<User | null> {
+    return await this.userModel
+      .findByIdAndUpdate(id, { lastLogin: new Date() }, { new: true })
+      .exec();
+  }
 }

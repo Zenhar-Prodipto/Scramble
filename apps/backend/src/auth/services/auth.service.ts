@@ -8,7 +8,12 @@ import { EmailService } from "src/shared/services/email_service";
 import { ApiException, ApiSuccess } from "src/common/exceptions/api.exceptions";
 import { SignupDto } from "../dto/signup.dto";
 import { RefreshDto } from "../dto/refresh.dto";
-import { SignupResponseData } from "../interfaces/auth.interface";
+import {
+  LoginResponseData,
+  SignupResponseData,
+} from "../interfaces/auth.interface";
+import { LoginDto } from "../dto/login.dto";
+import * as bcrypt from "bcryptjs";
 
 @Injectable()
 export class AuthService {
@@ -91,6 +96,98 @@ export class AuthService {
     }
   }
 
+  async login(loginDto: LoginDto): Promise<ApiSuccess<LoginResponseData>> {
+    try {
+      const user = await this.usersService.findByEmail(loginDto.email);
+      if (!user) {
+        throw new ApiException("Invalid credentials", HttpStatus.UNAUTHORIZED);
+      }
+
+      const isPasswordValid = await this.checkPasswordMatch(
+        loginDto.password,
+        user.password
+      );
+
+      if (!isPasswordValid) {
+        throw new ApiException("Invalid credentials", HttpStatus.UNAUTHORIZED);
+      }
+
+      // Update lastLogin
+      await this.usersService.updateLastLogin(user._id.toString());
+
+      const { accessToken, refreshToken } = await this.generateTokens(user);
+      try {
+        await this.redisService.storeRefreshToken(
+          user._id.toString(),
+          refreshToken
+        );
+      } catch (error) {
+        throw new ApiException(
+          "Failed to store refresh token",
+          HttpStatus.INTERNAL_SERVER_ERROR,
+          error.message
+        );
+      }
+
+      const data: LoginResponseData = {
+        user: {
+          id: user._id.toString(),
+          email: user.email,
+          name: user.name,
+          lastLogin: user.lastLogin,
+        },
+        accessToken,
+        refreshToken,
+      };
+
+      return {
+        success: true,
+        message: "User logged in successfully",
+        status: HttpStatus.OK,
+        data,
+      };
+    } catch (error) {
+      this.logger.error(
+        `Login failed for ${loginDto.email}: ${error.message}`,
+        error.stack
+      );
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      throw new ApiException(
+        "Failed to login user",
+        HttpStatus.INTERNAL_SERVER_ERROR,
+        error.message
+      );
+    }
+  }
+
+  async logout(userId: string): Promise<ApiSuccess<{}>> {
+    try {
+      // Delete refresh token from Redis
+      await this.redisService.delRefreshToken(userId);
+
+      return {
+        success: true,
+        message: "User logged out successfully",
+        status: HttpStatus.OK,
+        data: {},
+      };
+    } catch (error) {
+      this.logger.error(
+        `Logout failed for user ${userId}: ${error.message}`,
+        error.stack
+      );
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      throw new ApiException(
+        "Failed to logout user",
+        HttpStatus.INTERNAL_SERVER_ERROR,
+        error.message
+      );
+    }
+  }
   async refreshToken(
     refreshDto: RefreshDto
   ): Promise<ApiSuccess<{ accessToken: string }>> {
@@ -144,6 +241,7 @@ export class AuthService {
       this.configService.get<string>("JWT_ACCESS_EXPIRES_IN"),
       this.configService.get<string>("JWT_REFRESH_EXPIRES_IN"),
     ];
+
     if (!jwtSecret || !refreshSecret || !accessExpiry || !refreshExpiry) {
       this.logger.error("JWT configuration is incomplete");
       throw new ApiException(
@@ -164,6 +262,25 @@ export class AuthService {
     } catch (error) {
       throw new ApiException(
         "Failed to generate tokens",
+        HttpStatus.INTERNAL_SERVER_ERROR,
+        error.message
+      );
+    }
+  }
+
+  private async checkPasswordMatch(
+    password: string,
+    hashedPassword: string
+  ): Promise<boolean> {
+    try {
+      return await bcrypt.compare(password, hashedPassword);
+    } catch (error) {
+      this.logger.error(
+        `Password comparison failed: ${error.message}`,
+        error.stack
+      );
+      throw new ApiException(
+        "Failed to compare passwords",
         HttpStatus.INTERNAL_SERVER_ERROR,
         error.message
       );

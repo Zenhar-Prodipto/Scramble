@@ -68,4 +68,38 @@ export class UsersService {
       );
     }
   }
+
+  async updateLastLogin(userId: string): Promise<User> {
+    try {
+      const user = await this.usersRepository.updateLastLogin(userId);
+      if (!user) {
+        throw new ApiException("User not found", HttpStatus.NOT_FOUND);
+      }
+      return user;
+    } catch (error) {
+      // Handle specific errors from the repository
+      if (error.name === "CastError") {
+        throw new ApiException(
+          "Invalid user ID format",
+          HttpStatus.BAD_REQUEST,
+          error.message
+        );
+      }
+
+      //handle Mongoose validation errors
+      if (error.name === "ValidationError") {
+        throw new ApiException(
+          "Validation error",
+          HttpStatus.BAD_REQUEST,
+          error.message
+        );
+      }
+      // Handle other errors
+      throw new ApiException(
+        "Failed to update last login",
+        HttpStatus.INTERNAL_SERVER_ERROR,
+        error.message
+      );
+    }
+  }
 }
