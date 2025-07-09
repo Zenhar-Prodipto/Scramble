@@ -1,13 +1,20 @@
 // src/users/services/users.service.ts
-import { Injectable, HttpStatus } from "@nestjs/common";
+import { Injectable, HttpStatus, Logger, HttpException } from "@nestjs/common";
 import { UsersRepository } from "../repositories/users.repository";
 import { SignupDto } from "../../auth/dto/signup.dto";
 import { User } from "../schemas/users.schema";
-import { ApiException } from "src/common/exceptions/api.exceptions";
+import { ApiException, ApiSuccess } from "src/common/exceptions/api.exceptions";
+import { UserResponseData } from "../interfaces/users.interface";
+import { UpdateUserDto } from "../dto/update-user.dto";
+import { RedisService } from "src/shared/services/redis_service";
 
 @Injectable()
 export class UsersService {
-  constructor(private readonly usersRepository: UsersRepository) {}
+  private readonly logger = new Logger(UsersService.name);
+  constructor(
+    private readonly usersRepository: UsersRepository,
+    private readonly redisService: RedisService
+  ) {}
 
   async findByEmail(email: string): Promise<User> {
     try {
@@ -97,6 +104,148 @@ export class UsersService {
       // Handle other errors
       throw new ApiException(
         "Failed to update last login",
+        HttpStatus.INTERNAL_SERVER_ERROR,
+        error.message
+      );
+    }
+  }
+
+  async getProfile(userId: string): Promise<ApiSuccess<UserResponseData>> {
+    try {
+      console.log(`Fetching profile for user ${userId}`);
+      this.logger.log(`Fetching profile for user ${userId}`);
+      const cacheKey = `user:${userId}`;
+      const cachedUser = await this.redisService.get(cacheKey);
+      if (cachedUser) {
+        console.log(`Cache hit for user ${userId}`);
+        const user = JSON.parse(cachedUser);
+        this.logger.log(`Retrieved user profile for ${userId} from cache`);
+        return {
+          success: true,
+          message: "User profile retrieved successfully",
+          status: HttpStatus.OK,
+          data: { user },
+        };
+      }
+      this.logger.log(`Cache miss for user ${userId}, fetching from database`);
+      console.log(`Cache miss for user ${userId}, fetching from database`);
+
+      const user = await this.usersRepository.findById(userId);
+      if (!user) {
+        throw new ApiException("User not found", HttpStatus.NOT_FOUND);
+      }
+
+      const userData: UserResponseData["user"] = {
+        id: user._id.toString(),
+        email: user.email,
+        name: user.name,
+        gender: user.gender,
+        avatar: user.avatar,
+        usageType: user.usageType,
+        company: user.company,
+        lastLogin: user.lastLogin,
+        isActive: user.isActive,
+        projects: user.projects.map((id) => id.toString()),
+      };
+
+      // Cache user data for 1 hour
+      try {
+        await this.redisService.set(cacheKey, JSON.stringify(userData), 3600);
+      } catch (error) {
+        this.logger.warn(
+          `Failed to cache user profile for ${userId}: ${error.message}`,
+          error.stack
+        );
+        // Continue without throwing, as we can still return the user data
+      }
+
+      return {
+        success: true,
+        message: "User profile retrieved successfully",
+        status: HttpStatus.OK,
+        data: { user: userData },
+      };
+    } catch (error) {
+      this.logger.error(
+        `Failed to get profile for user ${userId}: ${error.message}`,
+        error.stack
+      );
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      throw new ApiException(
+        "Failed to get user profile",
+        HttpStatus.INTERNAL_SERVER_ERROR,
+        error.message
+      );
+    }
+  }
+
+  async updateProfile(
+    userId: string,
+    updateUserDto: UpdateUserDto
+  ): Promise<ApiSuccess<UserResponseData>> {
+    try {
+      const user = await this.usersRepository.updateUser(userId, updateUserDto);
+      if (!user) {
+        throw new ApiException("User not found", HttpStatus.NOT_FOUND);
+      }
+
+      const userData: UserResponseData["user"] = {
+        id: user._id.toString(),
+        email: user.email,
+        name: user.name,
+        gender: user.gender,
+        avatar: user.avatar,
+        usageType: user.usageType,
+        company: user.company,
+        lastLogin: user.lastLogin,
+        isActive: user.isActive,
+        projects: user.projects.map((id) => id.toString()),
+      };
+
+      try {
+        await this.redisService.del(`user:${userId}`);
+        await this.redisService.del(`user:email:${user.email}`);
+        await this.redisService.set(
+          `user:${userId}`,
+          JSON.stringify(userData),
+          3600
+        );
+      } catch (error) {
+        this.logger.warn(
+          `Failed to update cache for user ${userId}: ${error.message}`,
+          error.stack
+        );
+      }
+
+      return {
+        success: true,
+        message: "User profile updated successfully",
+        status: HttpStatus.OK,
+        data: { user: userData },
+      };
+    } catch (error) {
+      this.logger.error(
+        `Failed to update profile for user ${userId}: ${error.message}`,
+        error.stack
+      );
+      if (error.name === "CastError") {
+        throw new ApiException(
+          "Invalid user ID format",
+          HttpStatus.BAD_REQUEST,
+          error.message
+        );
+      }
+      if (error.name === "ValidationError") {
+        throw new ApiException(
+          "Validation error",
+          HttpStatus.BAD_REQUEST,
+          error.message
+        );
+      }
+      throw new ApiException(
+        "Failed to update user profile",
         HttpStatus.INTERNAL_SERVER_ERROR,
         error.message
       );

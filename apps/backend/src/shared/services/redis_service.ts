@@ -40,6 +40,66 @@ export class RedisService {
     }
   }
 
+  async set(key: string, value: string, ttl?: number): Promise<void> {
+    try {
+      if (this.isRedisConnected) {
+        if (ttl) {
+          await this.redisClient.set(key, value, { EX: ttl });
+        } else {
+          await this.redisClient.set(key, value);
+        }
+        this.logger.log(`Set key ${key} in Redis`);
+      } else {
+        this.inMemoryStore.set(key, value);
+        this.logger.log(`Set key ${key} in in-memory store`);
+      }
+    } catch (error) {
+      this.logger.error(`Failed to set key ${key}: ${error.message}`);
+      throw new ApiException(
+        "Failed to set cache",
+        HttpStatus.INTERNAL_SERVER_ERROR,
+        error.message
+      );
+    }
+  }
+
+  async get(key: string): Promise<string | null> {
+    try {
+      if (this.isRedisConnected) {
+        this.logger.log(`Retrieving key ${key} from Redis`);
+        return await this.redisClient.get(key);
+      }
+      this.logger.log(`Retrieving key ${key} from in-memory store`);
+      return this.inMemoryStore.get(key) || null;
+    } catch (error) {
+      this.logger.error(`Failed to get key ${key}: ${error.message}`);
+      throw new ApiException(
+        "Failed to retrieve cache",
+        HttpStatus.INTERNAL_SERVER_ERROR,
+        error.message
+      );
+    }
+  }
+
+  async del(key: string): Promise<void> {
+    try {
+      if (this.isRedisConnected) {
+        this.logger.log(`Deleting key ${key} from Redis`);
+        await this.redisClient.del(key);
+      } else {
+        this.logger.log(`Deleting key ${key} from in-memory store`);
+        this.inMemoryStore.delete(key);
+      }
+    } catch (error) {
+      this.logger.error(`Failed to delete key ${key}: ${error.message}`);
+      throw new ApiException(
+        "Failed to delete cache",
+        HttpStatus.INTERNAL_SERVER_ERROR,
+        error.message
+      );
+    }
+  }
+
   async storeRefreshToken(userId: string, refreshToken: string): Promise<void> {
     try {
       if (this.isRedisConnected) {

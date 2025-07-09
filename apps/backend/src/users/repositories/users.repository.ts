@@ -4,6 +4,7 @@ import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
 import { User } from "../schemas/users.schema";
 import { SignupDto } from "../../auth/dto/signup.dto";
+import { UpdateUserDto } from "../dto/update-user.dto";
 
 @Injectable()
 export class UsersRepository {
@@ -25,6 +26,16 @@ export class UsersRepository {
   async updateLastLogin(id: string): Promise<User | null> {
     return await this.userModel
       .findByIdAndUpdate(id, { lastLogin: new Date() }, { new: true })
+      .exec();
+  }
+
+  async updateUser(
+    id: string,
+    updateUserDto: UpdateUserDto
+  ): Promise<User | null> {
+    return this.userModel
+      .findByIdAndUpdate(id, updateUserDto, { new: true, runValidators: true })
+      .select("-__v -password -refreshToken")
       .exec();
   }
 }
