@@ -1,42 +1,53 @@
-import { Module } from "@nestjs/common";
+// src/app.module.ts
+import { Module, Global } from "@nestjs/common";
+import { ConfigModule } from "@nestjs/config";
 import { MongooseModule } from "@nestjs/mongoose";
 import { ThrottlerModule } from "@nestjs/throttler";
-import { BullModule } from "@nestjs/bull";
-import { ConfigModule, ConfigService } from "@nestjs/config";
+import { JwtModule } from "@nestjs/jwt";
+import { APP_GUARD } from "@nestjs/core";
+import { Reflector } from "@nestjs/core";
 import { AuthModule } from "./auth/auth.module";
 import { UsersModule } from "./users/users.module";
-import { UsersService } from "./users/services/users.service";
+import { SharedModule } from "./shared/shared.module";
+import { AppController } from "./app.controller";
+import { JwtAuthGuard } from "./auth/guards/jwt-auth.guard";
 
+@Global()
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
     }),
-    MongooseModule.forRootAsync({
-      useFactory: (configService: ConfigService) => ({
-        uri: configService.get<string>("MONGODB_URI"),
+    JwtModule.registerAsync({
+      imports: [ConfigModule],
+      useFactory: async () => ({
+        // No global secret needed; AuthService uses specific secrets
       }),
-      inject: [ConfigService],
-    }),
-    BullModule.forRootAsync({
-      useFactory: (configService: ConfigService) => ({
-        redis: {
-          host: configService.get<string>("REDIS_HOST"),
-          port: configService.get<number>("REDIS_PORT"),
-          password: configService.get<string>("REDIS_PASSWORD"),
-        },
-      }),
-      inject: [ConfigService],
+      inject: [],
     }),
     ThrottlerModule.forRoot([
       {
-        ttl: 60000,
-        limit: 100,
+        name: "signup",
+        ttl: 3600000,
+        limit: 3,
       },
     ]),
+    MongooseModule.forRootAsync({
+      useFactory: () => ({
+        uri: process.env.MONGODB_URI || "mongodb://mongo:27017/scramble",
+      }),
+    }),
     AuthModule,
     UsersModule,
+    SharedModule,
   ],
-  providers: [UsersService],
+  controllers: [AppController],
+  providers: [
+    Reflector,
+    {
+      provide: APP_GUARD,
+      useClass: JwtAuthGuard,
+    },
+  ],
 })
 export class AppModule {}
