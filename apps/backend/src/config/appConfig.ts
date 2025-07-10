@@ -1,7 +1,7 @@
 import * as dotenv from "dotenv";
 import { join } from "path";
 
-dotenv.config({ path: join(__dirname, "../../../../.env") }); // Path to root .env
+dotenv.config({ path: join(__dirname, "../../../.env") }); // Path to root .env
 
 const required = (key: string): string => {
   const value = process.env[key];
@@ -11,10 +11,12 @@ const required = (key: string): string => {
   return value;
 };
 
+// Application configuration
 export interface AppConfig {
   env: string;
   port: number;
   frontendPort: number;
+  frontendUrl: string;
   mongo: {
     uri: string;
     rootUsername: string;
@@ -26,8 +28,10 @@ export interface AppConfig {
     password: string;
   };
   jwt: {
-    secret: string;
-    expiresIn: string;
+    accessTokenSecret: string;
+    refreshTokenSecret: string;
+    accessExpiresIn: string;
+    refreshExpiresIn: string;
   };
   bullBoard: {
     username: string;
@@ -39,6 +43,7 @@ const appConfig: AppConfig = {
   env: required("NODE_ENV"),
   port: parseInt(required("PORT"), 10),
   frontendPort: parseInt(required("FRONTEND_PORT"), 10),
+  frontendUrl: required("FRONTEND_URL"),
   mongo: {
     uri: required("MONGODB_URI"),
     rootUsername: required("MONGODB_ROOT_USERNAME"),
@@ -50,8 +55,10 @@ const appConfig: AppConfig = {
     password: required("REDIS_PASSWORD"),
   },
   jwt: {
-    secret: required("JWT_SECRET"),
-    expiresIn: required("JWT_EXPIRES_IN"),
+    accessTokenSecret: required("JWT_ACCESS_SECRET"),
+    refreshTokenSecret: required("JWT_REFRESH_SECRET"),
+    accessExpiresIn: required("JWT_ACCESS_EXPIRES_IN"),
+    refreshExpiresIn: required("JWT_REFRESH_EXPIRES_IN"),
   },
   bullBoard: {
     username: required("BULL_BOARD_USERNAME"),
