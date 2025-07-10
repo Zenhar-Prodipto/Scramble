@@ -5,6 +5,7 @@ import { Model } from "mongoose";
 import { User } from "../schemas/users.schema";
 import { SignupDto } from "../../auth/dto/signup.dto";
 import { UpdateUserDto } from "../dto/update-user.dto";
+import * as bcrypt from "bcryptjs";
 
 @Injectable()
 export class UsersRepository {
@@ -36,6 +37,17 @@ export class UsersRepository {
     return this.userModel
       .findByIdAndUpdate(id, updateUserDto, { new: true, runValidators: true })
       .select("-__v -password -refreshToken")
+      .exec();
+  }
+
+  async updatePassword(id: string, newPassword: string): Promise<User | null> {
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    return await this.userModel
+      .findByIdAndUpdate(
+        id,
+        { password: hashedPassword },
+        { new: true, runValidators: true }
+      )
       .exec();
   }
 }

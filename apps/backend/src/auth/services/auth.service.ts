@@ -268,7 +268,7 @@ export class AuthService {
     }
   }
 
-  private async checkPasswordMatch(
+  async checkPasswordMatch(
     password: string,
     hashedPassword: string
   ): Promise<boolean> {

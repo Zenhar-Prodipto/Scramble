@@ -7,6 +7,7 @@ import {
   HttpStatus,
   Request,
   UsePipes,
+  Put,
 } from "@nestjs/common";
 import { UsersService } from "../services/users.service";
 import { UpdateUserDto } from "../dto/update-user.dto";
@@ -24,6 +25,7 @@ import {
   ApiSuccess,
 } from "../../common/exceptions/api.exceptions";
 import { UserResponseData } from "../interfaces/users.interface";
+import { UpdatePasswordDto } from "../dto/update-password.dto";
 
 // UsersController handles user-related routes
 @ApiTags("users")
@@ -106,5 +108,48 @@ export class UsersController {
     @Body() updateUserDto: UpdateUserDto
   ): Promise<ApiSuccess<UserResponseData>> {
     return this.usersService.updateProfile(req.user.sub, updateUserDto);
+  }
+
+  // Update authenticated user's password
+  @Throttle({ default: { limit: 5, ttl: 3600000 } }) // 5 requests per hour
+  @Put("me/update/password")
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: "Update authenticated user's password" })
+  @ApiBearerAuth()
+  @ApiBody({ type: UpdatePasswordDto })
+  @ApiResponse({
+    status: 200,
+    description: "Password updated successfully",
+  })
+  @ApiResponse({
+    status: 400,
+    description: "Invalid input or incorrect old password",
+    type: ApiException,
+  })
+  @ApiResponse({
+    status: 401,
+    description: "Unauthorized",
+    type: ApiException,
+  })
+  @ApiResponse({
+    status: 404,
+    description: "User not found",
+    type: ApiException,
+  })
+  @ApiResponse({
+    status: 429,
+    description: "Too many requests",
+    type: ApiException,
+  })
+  @ApiResponse({
+    status: 500,
+    description: "Internal server error",
+    type: ApiException,
+  })
+  async updatePassword(
+    @Request() req: any,
+    @Body() updatePasswordDto: UpdatePasswordDto
+  ): Promise<ApiSuccess<null>> {
+    return this.usersService.updatePassword(req.user.sub, updatePasswordDto);
   }
 }

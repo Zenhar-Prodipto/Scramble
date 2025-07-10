@@ -107,10 +107,12 @@ export class RedisService {
           EX: 604800, // 7 days
         });
 
-        console.log(`Storing refresh token for user ${userId} in Redis`);
+        this.logger.log(
+          `Storing refresh token for user ${userId} in Redis with 7 days TTL`
+        );
       } else {
         this.inMemoryStore.set(`refresh:${userId}`, refreshToken);
-        console.log(
+        this.logger.log(
           `Storing refresh token for user ${userId} in in-memory store`
         );
       }
@@ -127,10 +129,12 @@ export class RedisService {
   async getRefreshToken(userId: string): Promise<string | null> {
     try {
       if (this.isRedisConnected) {
-        console.log(`Retrieving refresh token for user ${userId} from Redis`);
+        this.logger.log(
+          `Retrieving refresh token for user ${userId} from Redis`
+        );
         return await this.redisClient.get(`refresh:${userId}`);
       }
-      console.log(
+      this.logger.log(
         `Retrieving refresh token for user ${userId} from in-memory store`
       );
       return this.inMemoryStore.get(`refresh:${userId}`) || null;
@@ -147,10 +151,10 @@ export class RedisService {
   async delRefreshToken(userId: string): Promise<void> {
     try {
       if (this.isRedisConnected) {
-        console.log(`Deleting refresh token for user ${userId} from Redis`);
+        this.logger.log(`Deleting refresh token for user ${userId} from Redis`);
         await this.redisClient.del(`refresh:${userId}`);
       } else {
-        console.log(
+        this.logger.log(
           `Deleting refresh token for user ${userId} from in-memory store`
         );
         this.inMemoryStore.delete(`refresh:${userId}`);

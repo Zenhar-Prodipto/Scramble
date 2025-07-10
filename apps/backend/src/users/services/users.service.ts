@@ -1,5 +1,12 @@
 // src/users/services/users.service.ts
-import { Injectable, HttpStatus, Logger, HttpException } from "@nestjs/common";
+import {
+  Injectable,
+  HttpStatus,
+  Logger,
+  HttpException,
+  forwardRef,
+  Inject,
+} from "@nestjs/common";
 import { UsersRepository } from "../repositories/users.repository";
 import { SignupDto } from "../../auth/dto/signup.dto";
 import { User } from "../schemas/users.schema";
@@ -7,13 +14,17 @@ import { ApiException, ApiSuccess } from "src/common/exceptions/api.exceptions";
 import { UserResponseData } from "../interfaces/users.interface";
 import { UpdateUserDto } from "../dto/update-user.dto";
 import { RedisService } from "src/shared/services/redis_service";
+import { UpdatePasswordDto } from "../dto/update-password.dto";
+import { AuthService } from "../../auth/services/auth.service";
 
 @Injectable()
 export class UsersService {
   private readonly logger = new Logger(UsersService.name);
   constructor(
     private readonly usersRepository: UsersRepository,
-    private readonly redisService: RedisService
+    private readonly redisService: RedisService,
+    @Inject(forwardRef(() => AuthService))
+    private readonly authService: AuthService
   ) {}
 
   async findByEmail(email: string): Promise<User> {
@@ -246,6 +257,66 @@ export class UsersService {
       }
       throw new ApiException(
         "Failed to update user profile",
+        HttpStatus.INTERNAL_SERVER_ERROR,
+        error.message
+      );
+    }
+  }
+
+  async updatePassword(
+    userId: string,
+    updatePasswordDto: UpdatePasswordDto
+  ): Promise<ApiSuccess<null>> {
+    try {
+      const user = await this.usersRepository.findById(userId);
+      if (!user) {
+        throw new ApiException("User not found", HttpStatus.NOT_FOUND);
+      }
+
+      const isMatch = await this.authService.checkPasswordMatch(
+        updatePasswordDto.oldPassword,
+        user.password
+      );
+
+      if (!isMatch) {
+        throw new ApiException(
+          "Incorrect old password",
+          HttpStatus.BAD_REQUEST
+        );
+      }
+
+      await this.usersRepository.updatePassword(
+        userId,
+        updatePasswordDto.newPassword
+      );
+
+      try {
+        await this.redisService.del(`user:${userId}`);
+        await this.redisService.del(`user:email:${user.email}`);
+        await this.redisService.delRefreshToken(userId);
+      } catch (error) {
+        this.logger.warn(
+          `Failed to invalidate cache/refresh token for user ${userId}: ${error.message}`,
+          error.stack
+        );
+      }
+
+      return {
+        success: true,
+        message: "Password updated successfully",
+        status: HttpStatus.OK,
+        data: null,
+      };
+    } catch (error) {
+      this.logger.error(
+        `Failed to update password for user ${userId}: ${error.message}`,
+        error.stack
+      );
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      throw new ApiException(
+        "Failed to update password",
         HttpStatus.INTERNAL_SERVER_ERROR,
         error.message
       );
